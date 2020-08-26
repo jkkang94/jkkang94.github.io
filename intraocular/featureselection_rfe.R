@@ -54,4 +54,8 @@ lda_rfe <- predictors(results)
 
 ######################################################################
 #rf_rfe <- c("c_wid","KAL","c_hei","Axial_Length","K_MEAN","K2","R_SE_MM","K1_D","K1_mm","K2_mm","ACDAL","Spherical_Equivalent_pre","ACD","age","IOP_pre","sex","Cyl_D","CCT")
-#
+# 18
+#lm_fre <- c("K2_mm","ACD","Axial_Length","c_hei","R_SE_MM","CCT","c_wid","K1_mm","K_MEAN","Cyl_D","ACDAL","DM","HTN","sex","a_cons","KAL","K1_D")
+# 17
+#svm_rfe, treebagrfe, lda_rfe -> 전체 선택 24
+# "c_wid","KAL","c_hei","Axial_Length","K_MEAN" 모든 rfe best 5!
