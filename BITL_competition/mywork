@@ -1,0 +1,175 @@
+---
+title: "BITL_compete"
+author: "jk"
+date: '2020 8 18 '
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## data load
+```{r, warning = FALSE}
+dat <- read.csv("radiomics_fundus_ds.csv")
+
+```
+
+## both elimination
+```{r, warning = FALSE,eval=FALSE,message=FALSE}
+library(MASS)
+stepAIC(lm(cl~.,data=dat),direction="both")
+```
+
+## stepwise = both result
+```{r, warning = FALSE}
+var_both <- c("calc_energy","calc_entropy" ,"calc_skewness", 
+        "calc_min", "calc_variance", "calc_RMS", "calc_sd", "glcm_variance", 
+        "glcm_cShade", "glcm_cTendency", "glcm_correlation","glcm_dissimilarity",
+        "glcm_homogeneity1", "glcm_homogeneity2", "glcm_inverseVariance", 
+        "glrlm_GLN", "glrlm_LRE", "glrlm_LRLGLE", "glrlm_LGLRE", "glrlm_SRE", 
+        "glszm_SAE", "glszm_SZV", "glszm_ZP","glszm_HIE", "glszm_LISAE", 
+        "glszm_HISAE","glszm_LILAE", "glszm_HILAE","cl")
+dat<- dat[,var_both]
+```
+전체 56개의 변수 중 stepwise = both로 28개 선택한다.
+```{r, warning = FALSE, eval=FALSE,message=FALSE}
+library(dplyr)
+dat1 <- dat%>%select(-"cl")
+```
+
+
+## 5-fold cross validation
+전체 데이터를 5-fold로 나누어 정확도를 확인했다.
+caret 패키지를 활용. seed = 100
+```{r, warning = FALSE,eval=FALSE,message=FALSE}
+library(caret)
+makeFold <- function(range, fld.k=5, getseed=100) {
+  set.seed(getseed)
+  fld <- createFolds(1:range, k=fld.k)
+  
+  return (fld)
+}
+
+fold <- makeFold(nrow(dat), fld.k=5, getseed=100)  
+
+```
+## stepwise로 선택한 28개 변수 
+```{r,  warning = FALSE,eval=FALSE}
+acc28 <- c() #28개 변수 사용 모델 정확도
+for (i in 1:length(fold)) {
+    set.seed(100)
+    # generate fold data
+    dat1 <- dat%>%select(-"cl")
+    ds.tr <- dat1[-fold[[i]],]
+    ds.ts <- dat1[fold[[i]],]
+    cl.tr <- as.factor(dat$cl[-fold[[i]]])
+    cl.ts <- as.factor(dat$cl[fold[[i]]])
+    
+    #rf
+    rand.fit <- randomForest(ds.tr , cl.tr , na.action = na.roughfix, ntree=500)
+    pr.rand <- predict(rand.fit, ds.ts)
+    
+    acc28[i] <- mean(pr.rand==cl.ts)
+    
+}
+cat("acc28 rf:", mean(acc28))  
+
+```
+총 28개의 변수로 5-fold cross validation으로 검정해 **acc : 0.635775**가 나왔다.
+
+### 최종 사용할 변수 개수 정하기
+
+## combination : n개 중 r개 선택하는 경우 
+nCr을 사용했는데 순서 상관없이 전체 n개 중 r개를 뽑는 경우의 수이다. 
+combination은 gtools 패키지를 사용했다.
+```{r,warning = FALSE,eval=FALSE,message=FALSE}
+library(gtools)
+combinations(n,r)
+
+```
+## randomForest
+ parameter 조정은 변수 선택을 확인 후 진행할 생각이었다. xgboost가 randomforest보다 더 정확하다고 판단하지만 parameter tuning이 많이 필요하지 않은 randomforest로 변수선택을 했다.
+ 
+ 
+ 이중 for문으로 두번째 for문에서 randomforest로 n.tree=500인 모델을 만들어 5-fold로 정확도를 도출하고 각 fold의 평균을 모델의 정확도로 판단했다. 첫번째 for문에서 combination을 활용해 n=28개의 변수 중 r=4개를 선택하는 모든 경우의 수를 생각했고 전체 20475 경우 중 max 정확도를 갖는 경우를 which함수를 활용해 도출했다. 
+ 
+ 
+## r=4
+28개에서 변수의 개수를 정하기 위해 모든 경우의 수를 확인해보기로 했다.
+위에서 언급한 combination 함수를 사용했다.
+처음 시작은 4개였고 별 이유는 없다.
+```{r,  warning = FALSE,eval=FALSE}
+library(gtools)
+library(randomForest)
+comb <- combinations(length(dat1),4)
+acc1 <- c() # 각 fold의 정확도
+acccomb <- c() # 각 combination의 정확도
+for(j in 1:length(comb)){
+  dat2<- dat1[comb[j,]]
+  
+  for (i in 1:length(fold)) {
+    set.seed(100)
+    # generate fold data
+    dat1 <- dat%>%select(-"cl")
+    ds.tr <- dat2[-fold[[i]],]
+    ds.ts <- dat2[fold[[i]],]
+    cl.tr <- as.factor(dat$cl[-fold[[i]]])
+    cl.ts <- as.factor(dat$cl[fold[[i]]])
+    
+    #rf
+    rand.fit <- randomForest(ds.tr , cl.tr , na.action = na.roughfix, ntree=500)
+    pr.rand <- predict(rand.fit, ds.ts)
+    
+    acc1[i] <- mean(pr.rand==cl.ts)
+    
+  }
+  acccomb[j]<- mean(acc1)
+}
+
+# 정확도 가장 높은 조합을 var4
+var4 <- colnames(dat1[,comb[which.max(acccomb),]])
+var4 <- c("calc_variance","calc_sd","glcm_inverseVariance","glszm_LISAE")
+```
+정확도는 **acc = 0.6803571**가 최고였다.
+
+
+## r=2
+```{r}
+var2 <- c("calc_energy", "calc_entrophy")
+```
+28개 중 2개를 뽑는 전체 경우의 수를 위에서 4개를 뽑는 과정처럼 시행한 결과 **acc = 0.6803571**의 결과가 나왔다.
+
+
+## r=5
+28개 변수 중 4개를 뽑은 위의 방식과 동일하게 5개를 선택하는 모든 경우를 실험했다.
+
+```{r}
+var5 <- c("calc_variance","calc_sd","glcm_correlation","glcm_inverseVariance","glszm_ZP")
+```
+**acc = 0.6980088**이었다.
+
+## r=6
+```{r}
+var6 <- c("calc_variance","calc_sd","glcm_correlation","glcm_inverseVariance",
+          "glcm_LRLGLE","glrlm_SRE")
+```
+**acc = 0.6856827**
+
+## r=7
+2개일때와 5개일때의 변수가 겹치는 것이 없어서 7개로 합쳐서 돌려보았다.
+```{r  warning = FALSE,eval=FALSE}
+var7 <- c(var2,var5)
+```
+**acc = 0.6554204**
+그리 높지 않았다.
+
+6개 이후의 조합은 경우의 수가 너무 많아져서 보류했다.
+
+## RF parameter tuning
+```{r warning = FALSE,eval=FALSE}
+rand.fit <- randomForest(ds.tr , cl.tr , 
+                         mtry=sqrt(ncol(ds.tr)),
+                         na.action = na.roughfix, ntree=450)
+pr.rand <- predict(rand.fit, ds.ts)
+accbest[i] <- mean(pr.rand==cl.ts)
+```
+***acc = 0.6997946***
