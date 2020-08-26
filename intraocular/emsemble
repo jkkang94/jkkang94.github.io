@@ -1,0 +1,156 @@
+rm(list = ls())
+########################################################
+## load data
+############
+getwd()
+setwd("C:/Users/THINK/Desktop/Intraocular")
+# sn60wf
+sn <- read.csv("200525_SN60WF.csv")
+zc <- read.csv("200525_ZCB00.csv")
+dat <- rbind(zc,sn)
+########################################################
+## variables
+############
+# a contant
+for(i in 1:nrow(zc)){
+  dat$a_cons[i] <- 119.4
+}
+zc_1 <- nrow(zc)+1
+for(i in zc_1:nrow(dat)){
+  dat$a_cons[i] <- 119
+}
+# variable
+for( i in 1:nrow(dat)){ 
+  # coAL
+  if(dat$Axial_Length[i] > 24.4){
+    dat$coAL[i] <- -3.446+1.716*dat$Axial_Length[i]-0.0237*(dat$Axial_Length[i]^2)
+  } else{
+    dat$coAL[i] <-dat$Axial_Length[i]
+  }
+  # c_wid
+  dat$c_wid[i] <- -5.41+0.58412*dat$coAL[i]+0.098*(337.5/dat$R_SE_MM[i])
+  # corneal height
+  dat$c_hei[i] <- dat$R_SE_MM[i] - sqrt((dat$R_SE_MM[i])^2 -(dat$c_wid[i]/2)^2)
+  # elp
+  dat$elp[i] <- dat$c_hei[i] + 0.62467*dat$a_cons[i] - 68.747 - 3.336
+  # elp_r_theo & elp_r_theo_
+  dat$elp_r_theo[i] <- 1/(12/1000-1/(1000*(dat$K_MEAN[i]/1000-1/(1000*((dat$elp[i]/1336)-1/(1336*(((dat$IOL_Power[i])/1336)-1/(dat$Axial_Length[i]-dat$elp[i]))))))))
+  
+  dat$elp_r_theo_[i] <- 1/(12/1000-1/(1000*(dat$K_MEAN[i]/1000-1/(1000*((dat$elp[i]/1336)-1/(1336*(((dat$IOL_Power[i]+0.5)/1336)-1/(dat$Axial_Length[i]-dat$elp[i]))))))))
+  # rx_dif
+  dat$rx_dif[i] <- dat$elp_r_theo[i] - dat$elp_r_theo_[i]
+  # KAL
+  dat$KAL[i] <- dat$K_MEAN[i]*dat$Axial_Length[i]
+  # KALM
+  dat$KALM[i] <- dat$R_SE_MM[i]*dat$Axial_Length[i]
+  # ACDAL
+  dat$ACDAL[i] <- dat$Axial_Length[i]/dat$ACD[i]
+  # CCT
+  dat$CCT[i] <- dat$CCT[i]/1000
+  
+  # IOL_Ideal
+  dat$IOL_Ideal[i] <- dat$IOL_Power[i] + (dat$Spherical_Equivalent_post[i]/dat$rx_dif[i])*0.5
+}
+dat$sex <- as.numeric(as.factor(dat$sex))-1
+dat_s$KAL <- scale(dat_s$KAL)
+library('caret')
+library('randomForest')
+library('rpart')
+library('e1071')
+library('xgboost')
+######################################################
+## data
+#######
+
+dat_all <- dat[,c("c_hei","c_wid","K_MEAN","Axial_Length","ACD","Spherical_Equivalent_pre",
+                  "CCT","Cyl_D","K1_D","K2","a_cons","DM","HTN","age","sex","IOP_pre",
+                  "K1_mm","K2_mm","R_SE_MM","K1_a","K2_a","Cyl_a",
+                  "ACDAL","KAL", #engineering features
+                  "IOL_Ideal", # target
+                  "IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post")] # except features
+# data_selected
+dat_s <- dat_all[,c("c_hei","c_wid","K_MEAN","Axial_Length","ACD","Spherical_Equivalent_pre",
+                    "CCT","Cyl_D","K1_D","K2","a_cons","DM","HTN","age","sex","IOP_pre",
+                    "K1_mm","K2_mm","R_SE_MM","K1_a","K2_a","Cyl_a",
+                    "ACDAL","KAL", #engineering features
+                    "IOL_Ideal", # target
+                    "IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post")] # except features)]
+## create fold ######################################
+
+makeFold <- function(range, fld.k=10, getseed=100) {
+  set.seed(getseed)
+  fld <- createFolds(1:range, k=fld.k)
+  
+  return (fld)
+}
+fold <- makeFold(nrow(dat_s), fld.k=10, getseed=100)  
+acc1 <- c()
+acc2 <- c()
+acc3 <- c()
+acc4 <- c()
+outlier <- list()
+normal <- list()
+xgb_pred <- c()
+library(dplyr)
+a<- dat_s%>%select(-c("IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post"))
+for (i in 1:length(fold)) {
+  library(dplyr)
+  set.seed(309)
+  # generate fold data
+  ds.tr <- dat_s[-fold[[i]],c(lm_rfe,"IOL_Ideal")]#%>%select(-c("IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post"))
+  ds.ts <- dat_s[fold[[i]],c(lm_rfe,"IOL_Ideal")]#%>%select(-c("IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post"))
+  ds.ts_ <- dat_s[fold[[i]],c("IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post")]
+  
+  #rf
+  rand.fit <- randomForest(IOL_Ideal ~., data = ds.tr , na.action = na.roughfix, ntree=500, mtry=16)
+  pr.rand <- predict(rand.fit, ds.ts)
+  
+  # xgboost
+  #ds.tr_x <- as.matrix(ds.tr) 
+  #ds.ts_x <- as.matrix(ds.ts)
+  
+  #xgb.fit <- xgboost(data = ds.tr_x[,-c(ncol(ds.tr_x))], label = ds.tr_x[,ncol(ds.tr_x)], 
+  #                   nrounds = 150, eta=0.08,
+  #                   max_depth=3, subsample=0.8, colsample_bytree=0.6,booster = "gbtree",
+  #                   gamma = 5,nthread=0,
+  #                   objective = "reg:linear")
+  #pr.xgb <- predict(xgb.fit, ds.ts_x[,-c(ncol(ds.ts_x))])
+  # GBM
+  #gbm.fit = gbm(ds.tr$IOL_Ideal ~., data = ds.tr, distribution = "gaussian",
+  #              cv.folds = 10, shrinkage = .01, n.minobsinnode = 3,
+  #              interaction.depth = 2,n.trees = 500)
+  #pr.gbm <- predict(gbm.fit, ds.ts)
+  
+  r_pred_rf <- (((ds.ts_$IOL_Power - pr.rand)/0.5)*ds.ts_$rx_dif) + ds.ts_$Spherical_Equivalent_post
+  #r_pred_xgb <- (((ds.ts_$IOL_Power - pr.xgb)/0.5)*ds.ts_$rx_dif) + ds.ts_$Spherical_Equivalent_post
+  #r_pred_gbm <- (((ds.ts_$IOL_Power - pr.gbm)/0.5)*ds.ts_$rx_dif) + ds.ts_$Spherical_Equivalent_post
+  #r_pred_esb <- (((ds.ts_$IOL_Power - (pr.gbm*0.2+pr.rand*0.3+pr.xgb*0.5))/0.5)*ds.ts_$rx_dif) + ds.ts_$Spherical_Equivalent_post
+  
+  acc1[i] <- length(which(abs(r_pred_rf-ds.ts_$Spherical_Equivalent_post)<0.5))/length(r_pred_rf)
+  #acc2[i] <- length(which(abs(r_pred_xgb-ds.ts_$Spherical_Equivalent_post)<0.5))/length(r_pred_xgb)
+  #acc3[i] <- length(which(abs(r_pred_gbm-ds.ts_$Spherical_Equivalent_post)<0.5))/length(r_pred_gbm)
+  
+  cat("rf fold",i,acc1[i], "\n")
+  #cat("xgb fold",i,acc2[i], "\n")
+  #cat("gbm fold",i,acc3[i], "\n")
+  
+  #ensemble
+  #acc4[i] <- length(which(abs(r_pred_esb-ds.ts_$Spherical_Equivalent_post)<0.5))/length(r_pred_gbm)
+  #cat("ensemble fold",i,acc4[i], "\n")
+  
+  #outlier
+  #outlier[[i]] <- subset(ds.ts, abs(r_pred_xgb-ds.ts_$Spherical_Equivalent_post)>=0.5)
+  #normal[[i]] <- subset(ds.ts, abs(r_pred_xgb-ds.ts_$Spherical_Equivalent_post)<0.5)
+}
+library(gbm)
+cat("acc ensemble:", mean(acc4))
+cat("acc rf:", mean(acc1))
+cat("acc xgb:", mean(acc2))
+cat("acc gbm:", mean(acc3))
+out <- rbind(outlier[[1]],outlier[[2]],outlier[[3]],outlier[[4]],
+             outlier[[5]],outlier[[6]],outlier[[7]],outlier[[8]],
+             outlier[[9]],outlier[[10]])
+norm <- rbind(normal[[1]],normal[[2]],normal[[3]],normal[[4]],
+              normal[[5]],normal[[6]],normal[[7]],normal[[8]],
+              normal[[9]],normal[[10]])
+all_d <- rbind(norm, out)
