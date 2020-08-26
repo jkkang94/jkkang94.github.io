@@ -49,3 +49,9 @@ print(results)
 predictors(results)
 plot(results, type=c("g", "o"))
 lda_rfe <- predictors(results)
+
+
+
+######################################################################
+#rf_rfe <- c("c_wid","KAL","c_hei","Axial_Length","K_MEAN","K2","R_SE_MM","K1_D","K1_mm","K2_mm","ACDAL","Spherical_Equivalent_pre","ACD","age","IOP_pre","sex","Cyl_D","CCT")
+#
