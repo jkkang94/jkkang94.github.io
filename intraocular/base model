@@ -1,0 +1,157 @@
+rm(list = ls())
+########################################################
+## load data
+############
+getwd()
+setwd("c:/users/jkkan/downloads/intraocular/")
+setwd("C:/Users/THINK/Desktop/Intraocular")
+# sn60wf
+sn <- read.csv("200525_SN60WF.csv")
+zc <- read.csv("200525_ZCB00.csv")
+dat <- rbind(zc,sn)
+########################################################
+## variables
+############
+
+# a contant
+for(i in 1:nrow(zc)){
+  dat$a_cons[i] <- 119.4
+}
+zc_1 <- nrow(zc)+1
+for(i in zc_1:nrow(dat)){
+  dat$a_cons[i] <- 119
+}
+dat$sex <- as.numeric(as.factor(dat$sex))-1
+# variable
+for( i in 1:nrow(dat)){ 
+  # coAL
+  if(dat$Axial_Length[i] > 24.4){
+    dat$coAL[i] <- -3.446+1.716*dat$Axial_Length[i]-0.0237*(dat$Axial_Length[i]^2)
+  } else{
+    dat$coAL[i] <-dat$Axial_Length[i]
+  }
+  # c_wid
+  dat$c_wid[i] <- -5.41+0.58412*dat$coAL[i]+0.098*(337.5/dat$R_SE_MM[i])
+  # corneal height
+  dat$c_hei[i] <- dat$R_SE_MM[i] - sqrt((dat$R_SE_MM[i])^2 -(dat$c_wid[i]/2)^2)
+  # elp
+  dat$elp[i] <- dat$c_hei[i] + 0.62467*dat$a_cons[i] - 68.747 - 3.336
+  # elp_r_theo & elp_r_theo_
+  dat$elp_r_theo[i] <- 1/(12/1000-1/(1000*(dat$K_MEAN[i]/1000-1/(1000*((dat$elp[i]/1336)-1/(1336*(((dat$IOL_Power[i])/1336)-1/(dat$Axial_Length[i]-dat$elp[i]))))))))
+  
+  dat$elp_r_theo_[i] <- 1/(12/1000-1/(1000*(dat$K_MEAN[i]/1000-1/(1000*((dat$elp[i]/1336)-1/(1336*(((dat$IOL_Power[i]+0.5)/1336)-1/(dat$Axial_Length[i]-dat$elp[i]))))))))
+  # rx_dif
+  dat$rx_dif[i] <- dat$elp_r_theo[i] - dat$elp_r_theo_[i]
+  # KAL
+  dat$KAL[i] <- dat$K_MEAN[i]*dat$Axial_Length[i]
+  # ACDAL
+  dat$ACDAL[i] <- dat$ACD[i]*dat$Axial_Length[i]
+  # CCT
+  dat$CCT[i] <- dat$CCT[i]/1000
+  # IOL_Ideal
+  dat$IOL_Ideal[i] <- dat$IOL_Power[i] + (dat$Spherical_Equivalent_post[i]/dat$rx_dif[i])*0.5
+}
+######################################################
+## data
+#######
+# data_all
+dat_all <- dat[,c("c_hei","c_wid","K_MEAN","Axial_Length","ACD","Spherical_Equivalent_pre",
+                  "CCT","Cyl_D","K1_D","K2","a_cons","DM","HTN","age","sex","IOP_pre",
+                  "K1_mm","K2_mm","R_SE_MM","K1_a","K2_a","Cyl_a",
+                  "ACDAL","KAL", #engineering features
+                  "IOL_Ideal", # target
+                  "IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post")] # except features
+# data_selected
+dat_s <- dat_all[,c("c_hei","c_wid","K_MEAN","Axial_Length","ACD","Spherical_Equivalent_pre",
+                    "CCT","Cyl_D","K1_D","K2","a_cons","DM","HTN","age","sex","IOP_pre",
+                    "K1_mm","K2_mm","R_SE_MM","K1_a","K2_a","Cyl_a",
+                    "ACDAL","KAL", #engineering features
+                    "IOL_Ideal", # target
+                    "IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post")] # except features)]
+########################################################
+## data split
+#############
+
+# train/test
+library(caret)
+set.seed(1)
+index <- sample(1:nrow(dat_s),round(0.75*nrow(dat_s)))
+train <- dat_s[index,c("c_hei","c_wid","K_MEAN","Axial_Length","ACD","Spherical_Equivalent_pre",
+                       "CCT","Cyl_D","K1_D","K2","a_cons","DM","HTN","age","sex","IOP_pre",
+                       "K1_mm","K2_mm","R_SE_MM","K1_a","K2_a","Cyl_a",
+                       "ACDAL","KAL", #engineering features
+                       "IOL_Ideal")] # target
+                       
+#train <- subset(dat_s,select=-c("IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post"))
+test <- dat_s[-index,c("c_hei","c_wid","K_MEAN","Axial_Length","ACD","Spherical_Equivalent_pre",
+                       "CCT","Cyl_D","K1_D","K2","a_cons","DM","HTN","age","sex","IOP_pre",
+                       "K1_mm","K2_mm","R_SE_MM","K1_a","K2_a","Cyl_a",
+                       "ACDAL","KAL", #engineering features
+                       "IOL_Ideal")] # target
+# model r_pred
+test_ <- dat_s[-index,c("IOL_Power","R_pred","rx_dif","Spherical_Equivalent_post")]
+library(xgboost)
+#########################################################
+## model
+########
+# random forest
+library(randomForest)
+rand.fit <- randomForest(IOL_Ideal~.,data = train, ntree=500, importance=TRUE)
+pr.rand <- predict(rand.fit, test)
+
+# feature importance
+importance(rand.fit)
+varImpPlot(rand.fit)
+# regression tree
+library(rpart)
+tree.fit <- rpart(IOL_Ideal~., data = train)
+pr.tree <- predict(tree.fit, test)
+MSE.tr <- sum((pr.tree - test$IOL_Ideal_elp)^2)/nrow(test)
+tree.fit$variable.importance
+
+# xgboost
+library(xgboost)
+set.seed(1)
+index <- sample(1:nrow(dat_s),round(0.75*nrow(dat_s)))
+train_x <- as.matrix(train) 
+test_x <- as.matrix(test)
+xgb.fit <- xgboost(data = train_x[,-c(ncol(train_x))], label = train_x[,ncol(train_x)],
+                   nrounds = 100, eta=0.1,
+                   max_depth=4, subsample=0.8, colsample_bytree=0.6,booster = "gbtree",
+                   gamma = 5,
+                   objective = "reg:linear")
+pr.xgb <- predict(xgb.fit, test_x[,-c(ncol(train_x))])
+# svm regression
+library(e1071)
+library('Epi')
+svm.fit <- svm(IOL_Ideal ~., data=train, kernel = "radial", degree = 3, gamma=1, cost=16)
+pr.svm <- predict(svm.fit, test)
+# knn
+knn.fit <- knnreg(IOL_Ideal ~., data=train, k = 5)
+pr.knn <- predict(knn.fit, test)
+
+# lm
+#lm.fit <- lm(IOL_Ideal ~., data=train)
+#pr.lm <- predict.lm(lm.fit, test[,-c(25)])
+
+###############################################################
+r_pred_rf <- (((test_$IOL_Power - rf_pred)/0.5)*test_$rx_dif) + test_$Spherical_Equivalent_post
+r_pred_rpart <- (((test_$IOL_Power - rpart_pred)/0.5)*test_$rx_dif) + test_$Spherical_Equivalent_post
+r_pred_xgb <- (((test_$IOL_Power - xgb_pred)/0.5)*test_$rx_dif) + test_$Spherical_Equivalent_post
+r_pred_svm <- (((test_$IOL_Power - svm_pred)/0.5)*test_$rx_dif) + test_$Spherical_Equivalent_post
+r_pred_knn <- (((test_$IOL_Power - knn_pred)/0.5)*test_$rx_dif) + test_$Spherical_Equivalent_post
+
+#############################################################
+## accuracy
+###########
+
+for(i in c(0.25,0.5,0.75,1)){
+  cat("srk/t",i, length(which(abs(test_$R_pred-test_$Spherical_Equivalent_post)<i))/length(test_$R_pred),"\n")
+  cat("rf",i, length(which(abs(r_pred_rf-test_$Spherical_Equivalent_post)<i))/length(r_pred_rf),"\n")
+  cat("rpart",i, length(which(abs(r_pred_rpart-test_$Spherical_Equivalent_post)<i))/length(r_pred_rpart),"\n")
+  cat("xgb",i, length(which(abs(r_pred_xgb-test_$Spherical_Equivalent_post)<i))/length(r_pred_xgb),"\n")
+  cat("svm",i, length(which(abs(r_pred_svm-test_$Spherical_Equivalent_post)<i))/length(r_pred_svm),"\n")
+  cat("knn",i, length(which(abs(r_pred_knn-test_$Spherical_Equivalent_post)<i))/length(r_pred_knn),"\n")
+#  cat("lm",i, length(which(abs(r_pred_lm-test_$Spherical_Equivalent_post)<i))/length(r_pred_lm),"\n")
+  cat("\n")
+}
